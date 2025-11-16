@@ -11,7 +11,7 @@
 #include <MFRC522.h>
 
 // ===================================================================
-// DEFINICIÓN DE PINES (Según tabla de conexiones segura)
+// DEFINICIÓN DE PINES 
 // ===================================================================
 
 // Sensor BMP280 (I2C)
@@ -445,3 +445,4 @@ void actualizarIndicadoresEstado() {
       break;
   }
 }
+
