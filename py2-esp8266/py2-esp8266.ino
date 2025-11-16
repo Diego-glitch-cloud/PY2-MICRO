@@ -11,6 +11,21 @@
 #include <MFRC522.h>
 
 // ===================================================================
+// GOOGLE SHEETS - CONFIGURACIÓN WIFI Y SCRIPT
+// ===================================================================
+#include <ESP8266WiFi.h>
+
+const char* WIFI_SSID = "WIFI";
+const char* WIFI_PASS = "PASSWORD";
+
+// URL del Apps Script
+String GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxMLoIvZ_iDyRddpPzAai2Jp2L7MWzpDG7zfOlQCU4mtWZyF1gqvWojBjc1WNohcj0/exec";
+
+// Intervalo de envío (ms)
+#define SHEETS_INTERVAL 10000
+unsigned long lastSheetsMillis = 0;
+
+// ===================================================================
 // DEFINICIÓN DE PINES
 // ===================================================================
 
@@ -99,6 +114,7 @@ bool faros_encendidos = false;
 
 // Lecturas de sensores
 float temperatura_actual = 0.0;
+float presion_hpa = 0.0;
 int luz_actual = 0;
 float distancia_actual = 0.0;
 
@@ -157,6 +173,26 @@ void setup() {
   Serial.println("\nSistema listo.");
   Serial.println("ESTADO ACTUAL: BLOQUEADO");
   Serial.println("Esperando tarjeta RFID valida para desbloquear...\n");
+
+  // Inicializar WIFI
+  Serial.println("\nConectando a WiFi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  int intentos = 0;
+  while (WiFi.status() != WL_CONNECTED && intentos < 20) {
+    delay(500);
+    Serial.print(".");
+    intentos++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi conectado.");
+    Serial.print("IP asignada: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nERROR: No se pudo conectar a WiFi (modo offline).");
+  }
+
 }
 
 // ===================================================================
@@ -174,10 +210,11 @@ void loop() {
     gestionarEncendidoTactil();
   }
   
-  // 3. LECTURA DE TEMPERATURA (siempre lee, pero solo calcula PWM)
+  // 3. LECTURA DE TEMPERATURA (siempre lee, pero solo calcula PWM) Y PRESIÓN (BMP280)
   if (now - lastTempMillis >= TEMP_INTERVAL) {
     lastTempMillis = now;
     temperatura_actual = leerTemperatura();
+    presion_hpa = leerPresion();
     calcularPWMVentilador(temperatura_actual);
   }
   
@@ -204,6 +241,14 @@ void loop() {
   
   // 6. CONTROL DEL MOTOR (según estado)
   actualizarMotor();
+
+  // 7. ENVÍO A GOOGLE SHEETS CADA 10 SEGUNDOS
+
+  if (now - lastSheetsMillis >= SHEETS_INTERVAL) {
+    lastSheetsMillis = now;
+    enviarDatosSheets();
+}
+
 }
 
 // ===================================================================
@@ -426,6 +471,51 @@ void actualizarMotor() {
 }
 
 // ===================================================================
+// FUNCIÓN 7: ENVIAR DATOS A GOOGLE SHEETS
+// ===================================================================
+void enviarDatosSheets() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Sheets: WiFi NO conectado, no se envía.");
+    return;
+  }
+
+  // Crear URL con los parámetros exactos de tu estructura
+  String url = GOOGLE_SCRIPT_URL +
+               "?presion=" + String(presion_hpa, 2) +
+               "&temp_motor=" + String(temperatura_actual, 1) +
+               "&luz=" + String(luz_actual) +
+               "&dist=" + String(distancia_actual, 1) +
+               "&estado=" + String(car_state);
+
+  Serial.println("\nEnviando a Google Sheets:");
+  Serial.println(url);
+
+  WiFiClient client;
+
+  if (!client.connect("script.google.com", 80)) {
+    Serial.println("Error al conectar con Google Script");
+    return;
+  }
+
+  // Enviar solicitud HTTP GET
+  client.println("GET " + url + " HTTP/1.1");
+  client.println("Host: script.google.com");
+  client.println("Connection: close");
+  client.println();
+
+  // Leer respuesta
+  while (client.connected() || client.available()) {
+    if (client.available()) {
+      String line = client.readStringUntil('\n');
+      Serial.println(line);
+    }
+  }
+
+  client.stop();
+}
+
+
+// ===================================================================
 // FUNCIONES AUXILIARES
 // ===================================================================
 
@@ -437,6 +527,16 @@ float leerTemperatura() {
   }
   return temp;
 }
+
+float leerPresion() {
+  float pres = bmp.readPressure() / 100.0F;  // Convertir a hPa
+  if (isnan(pres)) {
+    Serial.println("Error al leer presión");
+    return 0.0;
+  }
+  return pres;
+}
+
 
 float medirDistancia() {
   // Enviar pulso de 10µs
