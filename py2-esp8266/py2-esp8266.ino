@@ -37,7 +37,7 @@
 
 // Actuadores
 #define MOTOR_PIN 1       // TX - GPIO1 (PWM)
-#define BUZZER_PIN 10     // D9 (SD2) - GPIO10
+#define BUZZER_PIN 10     // D9 (SD2) - GPIO10 - BUZZER ACTIVO
 #define FARO_IZQ 14       // D5 - GPIO14
 #define FARO_DER 5        // D1 - GPIO5
 #define LED_ROJO 15       // D8 - GPIO15
@@ -338,7 +338,7 @@ void asistenciaRetroceso() {
   bool modo_retroceso = (digitalRead(SWITCH_RETRO) == LOW); // Pull-up activo en LOW
   
   if (!modo_retroceso) {
-    // Si no está en retroceso, apagar buzzer
+    // Si no está en retroceso, apagar buzzer activo
     digitalWrite(BUZZER_PIN, LOW);
     return;
   }
@@ -347,7 +347,7 @@ void asistenciaRetroceso() {
   distancia_actual = medirDistancia();
   
   if (distancia_actual <= 0) {
-    // Lectura inválida
+    // Lectura inválida, apagar buzzer
     digitalWrite(BUZZER_PIN, LOW);
     return;
   }
@@ -357,20 +357,21 @@ void asistenciaRetroceso() {
   Serial.print(" cm");
   
   if (distancia_actual <= DIST_CRITICA) {
-    // Distancia crítica: alarma constante
+    // Distancia crítica: buzzer activo sonando constantemente
     digitalWrite(BUZZER_PIN, HIGH);
-    Serial.println(" | ALARMA CRÍTICA");
+    Serial.println(" | ALARMA CRÍTICA - Buzzer constante");
   } else if (distancia_actual <= DIST_ALARMA) {
-    // Distancia de advertencia: alarma intermitente
+    // Distancia de advertencia: buzzer activo intermitente
+    // Toggle cada 300ms para alarma más urgente
     static unsigned long lastBeep = 0;
     unsigned long now = millis();
-    if (now - lastBeep > 500) {
+    if (now - lastBeep > 300) {
       digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN));
       lastBeep = now;
     }
-    Serial.println(" | Alarma intermitente");
+    Serial.println(" | Alarma intermitente - Buzzer pulsante");
   } else {
-    // Distancia segura
+    // Distancia segura, apagar buzzer activo
     digitalWrite(BUZZER_PIN, LOW);
     Serial.println(" | Distancia segura");
   }
