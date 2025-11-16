@@ -11,7 +11,7 @@
 #include <MFRC522.h>
 
 // ===================================================================
-// DEFINICIÓN DE PINES 
+// DEFINICIÓN DE PINES
 // ===================================================================
 
 // Sensor BMP280 (I2C)
@@ -33,11 +33,11 @@
 #define ECHO_PIN 3        // RX - GPIO3
 
 // Switch de Retroceso
-#define SWITCH_RETRO 12   // D6 - GPIO12
+#define SWITCH_RETRO 10   // SD3 - GPIO10
 
 // Actuadores
 #define MOTOR_PIN 1       // TX - GPIO1 (PWM)
-#define BUZZER_PIN 10     // D9 (SD2) - GPIO10 - BUZZER ACTIVO
+#define BUZZER_PIN 9      // SD2 - GPIO9 - BUZZER ACTIVO
 #define FARO_IZQ 14       // D5 - GPIO14
 #define FARO_DER 5        // D1 - GPIO5
 #define LED_ROJO 15       // D8 - GPIO15
@@ -446,4 +446,3 @@ void actualizarIndicadoresEstado() {
       break;
   }
 }
-
