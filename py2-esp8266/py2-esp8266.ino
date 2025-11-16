@@ -32,16 +32,11 @@
 #define TRIG_PIN 16       // D0 - GPIO16
 #define ECHO_PIN 3        // RX - GPIO3
 
-// Switch de Retroceso
-#define SWITCH_RETRO 10   // SD3 - GPIO10
-
 // Actuadores
-#define MOTOR_PIN 1       // TX - GPIO1 (PWM)
+#define MOTOR_PIN 1       // TX - GPIO1 (Control Digital ON/OFF)
 #define BUZZER_PIN 9      // SD2 - GPIO9 - BUZZER ACTIVO
-#define FARO_IZQ 14       // D5 - GPIO14
-#define FARO_DER 5        // D1 - GPIO5
-#define LED_ROJO 15       // D8 - GPIO15
-#define LED_VERDE 13      // D7 - GPIO13
+#define LED_VERDE 14      // D5 - GPIO14 (COMPARTIDO con RFID SCK)
+#define FARO_PIN 10       // SD3 - GPIO10
 
 // Sensor de Luz (Fotoresistencia)
 #define LUZ_PIN A0        // A0 - ADC
@@ -51,11 +46,11 @@
 // ===================================================================
 
 // Estados del carro
-#define BLOQUEADO 0
-#define DESBLOQUEADO 1
-#define ENCENDIDO 2
+#define BLOQUEADO 0       // Tarjeta no validada - Sistema bloqueado
+#define DESBLOQUEADO 1    // Tarjeta aceptada - Motor apagado
+#define ENCENDIDO 2       // Tarjeta aceptada - Motor encendido
 
-// Valores PWM del motor (0-1023)
+// Valores PWM calculados (solo para variable interna, no para motor físico)
 #define PWM_OFF 0
 #define PWM_BAJO 205      // 20%
 #define PWM_MEDIO 614     // 60%
@@ -86,7 +81,7 @@ byte UID_VALIDO[] = {0xDE, 0xAD, 0xBE, 0xEF};
 // VARIABLES GLOBALES
 // ===================================================================
 
-// Estado del sistema
+// Estado del sistema (CRÍTICO)
 int car_state = BLOQUEADO;
 
 // Objetos de sensores
@@ -107,6 +102,9 @@ float temperatura_actual = 0.0;
 int luz_actual = 0;
 float distancia_actual = 0.0;
 
+// Variable PWM calculada (para futuro envío a Blynk)
+int pwm_ventilador_calculado = PWM_OFF;
+
 // ===================================================================
 // CONFIGURACIÓN INICIAL
 // ===================================================================
@@ -119,7 +117,6 @@ void setup() {
   
   // Configurar pines de entrada
   pinMode(TOUCH_PIN, INPUT);
-  pinMode(SWITCH_RETRO, INPUT_PULLUP);
   pinMode(ECHO_PIN, INPUT);
   pinMode(LUZ_PIN, INPUT);
   
@@ -127,18 +124,14 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(MOTOR_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(FARO_IZQ, OUTPUT);
-  pinMode(FARO_DER, OUTPUT);
-  pinMode(LED_ROJO, OUTPUT);
+  pinMode(FARO_PIN, OUTPUT);
   pinMode(LED_VERDE, OUTPUT);
   
-  // Estado inicial: BLOQUEADO
-  digitalWrite(LED_ROJO, HIGH);
-  digitalWrite(LED_VERDE, LOW);
-  digitalWrite(FARO_IZQ, LOW);
-  digitalWrite(FARO_DER, LOW);
+  // Estado inicial: BLOQUEADO - Todo apagado
+  digitalWrite(MOTOR_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
-  analogWrite(MOTOR_PIN, PWM_OFF);
+  digitalWrite(FARO_PIN, LOW);
+  digitalWrite(LED_VERDE, LOW);
   
   // Inicializar I2C para BMP280
   Wire.begin(BMP_SDA, BMP_SCL);
@@ -161,7 +154,9 @@ void setup() {
   Serial.print("UID válido configurado: ");
   printUID(UID_VALIDO, 4);
   
-  Serial.println("\nSistema listo. Estado: BLOQUEADO\n");
+  Serial.println("\nSistema listo.");
+  Serial.println("ESTADO ACTUAL: BLOQUEADO");
+  Serial.println("Esperando tarjeta RFID valida para desbloquear...\n");
 }
 
 // ===================================================================
@@ -171,40 +166,44 @@ void setup() {
 void loop() {
   unsigned long now = millis();
   
-  // 1. GESTIÓN DE ACCESO Y ENCENDIDO
+  // 1. GESTIÓN DE ACCESO (SIEMPRE ACTIVO)
   gestionarAccesoRFID();
-  gestionarEncendidoTactil();
   
-  // 2. CONTROL TÉRMICO (solo si el carro está ENCENDIDO)
+  // 2. GESTIÓN DE ENCENDIDO CON TÁCTIL (solo si DESBLOQUEADO o ENCENDIDO)
+  if (car_state >= DESBLOQUEADO) {
+    gestionarEncendidoTactil();
+  }
+  
+  // 3. LECTURA DE TEMPERATURA (siempre lee, pero solo calcula PWM)
   if (now - lastTempMillis >= TEMP_INTERVAL) {
     lastTempMillis = now;
     temperatura_actual = leerTemperatura();
-    if (car_state == ENCENDIDO) {
-      controlarVentilador(temperatura_actual);
-    } else {
-      analogWrite(MOTOR_PIN, PWM_OFF);
-    }
+    calcularPWMVentilador(temperatura_actual);
   }
   
-  // 3. ILUMINACIÓN AUTOMÁTICA (si está DESBLOQUEADO o ENCENDIDO)
+  // 4. CONTROL DE FAROS (solo si ENCENDIDO)
   if (now - lastLuzMillis >= LUZ_INTERVAL) {
     lastLuzMillis = now;
     luz_actual = analogRead(LUZ_PIN);
-    if (car_state >= DESBLOQUEADO) {
+    
+    if (car_state == ENCENDIDO) {
       controlarFaros(luz_actual);
     } else {
-      apagarFaros();
+      // Si no está encendido, faros apagados
+      if (faros_encendidos) {
+        apagarFaros();
+      }
     }
   }
   
-  // 4. ASISTENCIA DE RETROCESO
+  // 5. ASISTENCIA DE RETROCESO (siempre mide, buzzer solo si ENCENDIDO)
   if (now - lastDistMillis >= DIST_INTERVAL) {
     lastDistMillis = now;
     asistenciaRetroceso();
   }
   
-  // Actualizar indicadores LED según estado
-  actualizarIndicadoresEstado();
+  // 6. CONTROL DEL MOTOR (según estado)
+  actualizarMotor();
 }
 
 // ===================================================================
@@ -224,20 +223,54 @@ void gestionarAccesoRFID() {
   
   // Comparar UID leído con UID válido
   if (compararUID(rfid.uid.uidByte, rfid.uid.size)) {
+    // ACCESO CONCEDIDO
     if (car_state == BLOQUEADO) {
       car_state = DESBLOQUEADO;
-      Serial.println("\nACCESO CONCEDIDO - Carro DESBLOQUEADO");
+      Serial.println("\n========================================");
+      Serial.println("ACCESO CONCEDIDO - Carro DESBLOQUEADO");
+      Serial.println("========================================");
       Serial.print("UID detectado: ");
       printUID(rfid.uid.uidByte, rfid.uid.size);
+      
+      // Encender LED Verde por 3 segundos
+      // Importante: Detener SPI primero para liberar GPIO14
+      rfid.PICC_HaltA();
+      rfid.PCD_StopCrypto1();
+      SPI.end();
+      
+      // Configurar GPIO14 como OUTPUT para LED
+      pinMode(LED_VERDE, OUTPUT);
+      digitalWrite(LED_VERDE, HIGH);
+      Serial.println("LED Verde encendido por 3 segundos...");
+      delay(3000);
+      digitalWrite(LED_VERDE, LOW);
+      Serial.println("LED Verde apagado.");
+      
+      // Reiniciar SPI para futuras lecturas RFID
+      SPI.begin();
+      rfid.PCD_Init();
+      
+      Serial.println("\nSistema desbloqueado. Presione sensor tactil para encender motor.\n");
+      return; // Salir después de procesar
     }
   } else {
-    Serial.println("\nACCESO DENEGADO - UID no autorizado");
+    // ACCESO DENEGADO
+    Serial.println("\n========================================");
+    Serial.println("ACCESO DENEGADO - UID no autorizado");
+    Serial.println("========================================");
     Serial.print("UID detectado: ");
     printUID(rfid.uid.uidByte, rfid.uid.size);
-    // Emitir alarma breve
+    
+    // Emitir alarma breve en buzzer
     digitalWrite(BUZZER_PIN, HIGH);
     delay(200);
     digitalWrite(BUZZER_PIN, LOW);
+    delay(100);
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(200);
+    digitalWrite(BUZZER_PIN, LOW);
+    
+    Serial.println("Sistema permanece BLOQUEADO.\n");
   }
   
   // Detener la lectura
@@ -259,47 +292,53 @@ void gestionarEncendidoTactil() {
     if (car_state == DESBLOQUEADO) {
       // Cambiar de DESBLOQUEADO a ENCENDIDO
       car_state = ENCENDIDO;
-      Serial.println("\nMotor ENCENDIDO");
+      Serial.println("\n========================================");
+      Serial.println("MOTOR ENCENDIDO - Carro en marcha");
+      Serial.println("========================================\n");
     } else if (car_state == ENCENDIDO) {
       // Cambiar de ENCENDIDO a DESBLOQUEADO
       car_state = DESBLOQUEADO;
-      Serial.println("\nMotor APAGADO (Carro aún desbloqueado)");
-      analogWrite(MOTOR_PIN, PWM_OFF);
+      Serial.println("\n========================================");
+      Serial.println("MOTOR APAGADO - Carro desbloqueado");
+      Serial.println("========================================\n");
     }
-    // Si está BLOQUEADO, no hace nada
   }
   
   prev_touch_state = touch_state;
 }
 
 // ===================================================================
-// FUNCIÓN 3: CONTROL TÉRMICO DEL MOTOR VENTILADOR
+// FUNCIÓN 3: CÁLCULO DE PWM VENTILADOR (solo variable interna)
 // ===================================================================
 
-void controlarVentilador(float temp) {
-  int pwm_valor = PWM_OFF;
+void calcularPWMVentilador(float temp) {
+  int pwm_anterior = pwm_ventilador_calculado;
   String nivel = "OFF";
   
   if (temp >= TEMP_MEDIO) {
-    pwm_valor = PWM_ALTO;
+    pwm_ventilador_calculado = PWM_ALTO;
     nivel = "ALTO (100%)";
   } else if (temp >= TEMP_BAJO) {
-    pwm_valor = PWM_MEDIO;
+    pwm_ventilador_calculado = PWM_MEDIO;
     nivel = "MEDIO (60%)";
   } else if (temp >= TEMP_OFF) {
-    pwm_valor = PWM_BAJO;
+    pwm_ventilador_calculado = PWM_BAJO;
     nivel = "BAJO (20%)";
+  } else {
+    pwm_ventilador_calculado = PWM_OFF;
+    nivel = "OFF";
   }
   
-  analogWrite(MOTOR_PIN, pwm_valor);
-  
-  Serial.print("Temperatura: ");
-  Serial.print(temp, 1);
-  Serial.print(" grados C | Ventilador: ");
-  Serial.print(nivel);
-  Serial.print(" (PWM: ");
-  Serial.print(pwm_valor);
-  Serial.println(")");
+  // Solo imprimir si cambió el nivel
+  if (pwm_anterior != pwm_ventilador_calculado) {
+    Serial.print("Temperatura: ");
+    Serial.print(temp, 1);
+    Serial.print(" grados C | Nivel ventilador calculado: ");
+    Serial.print(nivel);
+    Serial.print(" (PWM: ");
+    Serial.print(pwm_ventilador_calculado);
+    Serial.println(") [Variable interna para Blynk]");
+  }
 }
 
 // ===================================================================
@@ -310,8 +349,7 @@ void controlarFaros(int luz) {
   // Implementar histéresis para evitar parpadeo
   if (luz <= LUZ_OSCURO && !faros_encendidos) {
     // Está oscuro, encender faros
-    digitalWrite(FARO_IZQ, HIGH);
-    digitalWrite(FARO_DER, HIGH);
+    digitalWrite(FARO_PIN, HIGH);
     faros_encendidos = true;
     Serial.print("Faros ENCENDIDOS | Luminosidad: ");
     Serial.println(luz);
@@ -324,8 +362,7 @@ void controlarFaros(int luz) {
 }
 
 void apagarFaros() {
-  digitalWrite(FARO_IZQ, LOW);
-  digitalWrite(FARO_DER, LOW);
+  digitalWrite(FARO_PIN, LOW);
   faros_encendidos = false;
 }
 
@@ -334,46 +371,57 @@ void apagarFaros() {
 // ===================================================================
 
 void asistenciaRetroceso() {
-  // Leer estado del switch de retroceso
-  bool modo_retroceso = (digitalRead(SWITCH_RETRO) == LOW); // Pull-up activo en LOW
-  
-  if (!modo_retroceso) {
-    // Si no está en retroceso, apagar buzzer activo
-    digitalWrite(BUZZER_PIN, LOW);
-    return;
-  }
-  
-  // Medir distancia con HC-SR04
+  // Siempre mide distancia
   distancia_actual = medirDistancia();
   
   if (distancia_actual <= 0) {
-    // Lectura inválida, apagar buzzer
-    digitalWrite(BUZZER_PIN, LOW);
+    // Lectura inválida, apagar buzzer si estaba encendido
+    if (car_state == ENCENDIDO) {
+      digitalWrite(BUZZER_PIN, LOW);
+    }
     return;
   }
   
-  Serial.print("Retroceso activo | Distancia: ");
-  Serial.print(distancia_actual, 1);
-  Serial.print(" cm");
-  
-  if (distancia_actual <= DIST_CRITICA) {
-    // Distancia crítica: buzzer activo sonando constantemente
-    digitalWrite(BUZZER_PIN, HIGH);
-    Serial.println(" | ALARMA CRÍTICA - Buzzer constante");
-  } else if (distancia_actual <= DIST_ALARMA) {
-    // Distancia de advertencia: buzzer activo intermitente
-    // Toggle cada 300ms para alarma más urgente
-    static unsigned long lastBeep = 0;
-    unsigned long now = millis();
-    if (now - lastBeep > 300) {
-      digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN));
-      lastBeep = now;
+  // Solo actuar con el buzzer si el carro está ENCENDIDO
+  if (car_state == ENCENDIDO) {
+    if (distancia_actual <= DIST_CRITICA) {
+      // Distancia crítica: buzzer activo sonando constantemente
+      digitalWrite(BUZZER_PIN, HIGH);
+      Serial.print("ALERTA RETROCESO | Distancia: ");
+      Serial.print(distancia_actual, 1);
+      Serial.println(" cm | CRITICA - Buzzer constante");
+    } else if (distancia_actual <= DIST_ALARMA) {
+      // Distancia de advertencia: buzzer activo intermitente
+      static unsigned long lastBeep = 0;
+      unsigned long now = millis();
+      if (now - lastBeep > 300) {
+        digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN));
+        lastBeep = now;
+      }
+      Serial.print("ALERTA RETROCESO | Distancia: ");
+      Serial.print(distancia_actual, 1);
+      Serial.println(" cm | Alarma intermitente");
+    } else {
+      // Distancia segura, apagar buzzer activo
+      digitalWrite(BUZZER_PIN, LOW);
     }
-    Serial.println(" | Alarma intermitente - Buzzer pulsante");
   } else {
-    // Distancia segura, apagar buzzer activo
+    // Si no está encendido, asegurar buzzer apagado
     digitalWrite(BUZZER_PIN, LOW);
-    Serial.println(" | Distancia segura");
+  }
+}
+
+// ===================================================================
+// FUNCIÓN 6: ACTUALIZAR ESTADO DEL MOTOR
+// ===================================================================
+
+void actualizarMotor() {
+  if (car_state == ENCENDIDO) {
+    // Motor ON
+    digitalWrite(MOTOR_PIN, HIGH);
+  } else {
+    // Motor OFF (BLOQUEADO o DESBLOQUEADO)
+    digitalWrite(MOTOR_PIN, LOW);
   }
 }
 
@@ -428,21 +476,4 @@ void printUID(byte* uid, byte size) {
     if (i < size - 1) Serial.print(":");
   }
   Serial.println();
-}
-
-void actualizarIndicadoresEstado() {
-  switch (car_state) {
-    case BLOQUEADO:
-      digitalWrite(LED_ROJO, HIGH);
-      digitalWrite(LED_VERDE, LOW);
-      break;
-    case DESBLOQUEADO:
-      digitalWrite(LED_ROJO, LOW);
-      digitalWrite(LED_VERDE, HIGH);
-      break;
-    case ENCENDIDO:
-      digitalWrite(LED_ROJO, LOW);
-      digitalWrite(LED_VERDE, HIGH); // Verde parpadea o permanece encendido
-      break;
-  }
 }
