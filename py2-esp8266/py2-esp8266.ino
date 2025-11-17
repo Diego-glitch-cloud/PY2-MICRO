@@ -8,6 +8,8 @@
 #include <ESP8266WiFi.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
+#include <WiFiClientSecure.h>
+
 
 // -------------------------------
 // CONFIGURACIÓN WIFI
@@ -281,40 +283,44 @@ void enviarDatosSheets() {
     return;
   }
 
-  // Leer BMP280 (aunque falle)
+  distancia_actual = medirDistancia();
+
   temperatura_actual = bmp.readTemperature();
   presion_hpa = bmp.readPressure() / 100.0;
 
   if (isnan(temperatura_actual)) temperatura_actual = 0;
   if (isnan(presion_hpa)) presion_hpa = 0;
 
-  int luminosidad_raw = faros_encendidos ? 1 : 0;
+  int luz_raw = faros_encendidos ? 1 : 0;
 
-  String url = GOOGLE_SCRIPT_URL +
-               "?presion=" + String(presion_hpa, 2) +
-               "&temp_motor=" + String(temperatura_actual, 1) +
-               "&luz=" + String(luminosidad_raw) +
-               "&dist=" + String(distancia_actual, 1) +
-               "&estado=" + String(car_state);
+  String url = String(GOOGLE_SCRIPT_URL) +
+    "?presion=" + presion_hpa +
+    "&temp_motor=" + temperatura_actual +
+    "&luz=" + luz_raw +
+    "&dist=" + distancia_actual +
+    "&estado=" + car_state;
 
-  Serial.println("\nEnviando a Google Sheets:");
+  Serial.println("\nEnviando HTTPS:");
   Serial.println(url);
 
-  WiFiClient client;
+  WiFiClientSecure client;
+  client.setInsecure();
 
-  if (!client.connect("script.google.com", 80)) {
-    Serial.println("Error al conectar con Google Script");
+  if (!client.connect("script.google.com", 443)) {
+    Serial.println("Error HTTPS");
     return;
   }
 
   client.println("GET " + url + " HTTP/1.1");
   client.println("Host: script.google.com");
+  client.println("User-Agent: ESP8266");
   client.println("Connection: close");
   client.println();
 
   while (client.connected() || client.available()) {
-    if (client.available()) client.readStringUntil('\n');
+    if (client.available()) client.read();
   }
 
   client.stop();
 }
+
