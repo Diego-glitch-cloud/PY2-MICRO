@@ -10,54 +10,52 @@
 #include <Adafruit_BMP280.h>
 #include <WiFiClientSecure.h>
 
-
-// -------------------------------
+// ===================================================================
 // CONFIGURACIÓN WIFI
-// -------------------------------
+// ===================================================================
+
 const char* WIFI_SSID = "CLARO1_F4A959";
 const char* WIFI_PASS = "21938DEKzc";
 
-// URL de Google Script
 String GOOGLE_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMLoIvZ_iDyRddpPzAai2Jp2L7MWzpDG7zfOlQCU4mtWZyF1gqvWojBjc1WNohcj0/exec";
 
-// Intervalo de envío
-#define SHEETS_INTERVAL 10000
+#define SHEETS_INTERVAL 15000
 unsigned long lastSheetsMillis = 0;
 
 // ===================================================================
-// DEFINICIÓN DE PINES
+// DEFINICION DE PINES
 // ===================================================================
 
 // BMP280
-#define BMP_SDA 4     // D2 - GPIO4
-#define BMP_SCL 5     // D1 - GPIO5
+#define BMP_SDA 4
+#define BMP_SCL 5
 
-// Microfono KY-037/038
+// Microfono KY-037/038 (Analogico)
 #define MIC_ANALOG A0
 
-// Fotorresistencia (digital)
+// Fotorresistencia (Digital)
 #define LUZ_DO 16
 
-// HC-SR04
+// Sensor Ultrasonico HC-SR04
 #define TRIG_PIN 14
 #define ECHO_PIN 13
 
-// Sensor táctil
+// Sensor Tactil TTP223
 #define TOUCH_PIN 12
 
-// Actuadores
+// Actuadores (con resistencias para boot seguro)
 #define MOTOR_PIN 0
 #define BUZZER_PIN 15
 #define FARO_PIN 2
 
 // ===================================================================
-// ESTADOS
+// CONSTANTES DEL SISTEMA
 // ===================================================================
+
 #define APAGADO 0
 #define ENCENDIDO 1
 
-// Distancia
 #define DIST_ALARMA 30
 #define DIST_CRITICA 10
 
@@ -68,6 +66,7 @@ unsigned long lastSheetsMillis = 0;
 // ===================================================================
 // VARIABLES GLOBALES
 // ===================================================================
+
 int car_state = APAGADO;
 
 Adafruit_BMP280 bmp;
@@ -111,9 +110,6 @@ void setup() {
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(FARO_PIN, LOW);
 
-  // ------------------------------------
-  // BMP280 
-  // ------------------------------------
   Wire.begin(BMP_SDA, BMP_SCL);
   delay(80);
 
@@ -128,9 +124,6 @@ void setup() {
     Serial.println("BMP280 detectado en 0x76");
   }
 
-  // ------------------------------------
-  // Inicio de WiFi
-  // ------------------------------------
   Serial.println("\nConectando a WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -181,7 +174,6 @@ void loop() {
   }
 
   actualizarMotor();
-
 
   if (now - lastSheetsMillis >= SHEETS_INTERVAL) {
     lastSheetsMillis = now;
@@ -238,24 +230,54 @@ void asistenciaRetroceso() {
   }
 
   if (car_state == ENCENDIDO) {
-    if (distancia_actual <= DIST_CRITICA) digitalWrite(BUZZER_PIN, HIGH);
-    else if (distancia_actual <= DIST_ALARMA) {
+    if (distancia_actual <= DIST_CRITICA) {
+      digitalWrite(BUZZER_PIN, HIGH);
+    } else if (distancia_actual <= DIST_ALARMA) {
       static unsigned long lastBeep = 0;
       if (millis() - lastBeep > 300) {
         digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN));
         lastBeep = millis();
       }
-    } else digitalWrite(BUZZER_PIN, LOW);
-  } else digitalWrite(BUZZER_PIN, LOW);
+    } else {
+      digitalWrite(BUZZER_PIN, LOW);
+    }
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
 }
 
 void leerNivelRuido() {
   int suma = 0;
-  for (int i = 0; i < 10; i++) {
+  int lecturas = 10;
+
+  for (int i = 0; i < lecturas; i++) {
     suma += analogRead(MIC_ANALOG);
     delayMicroseconds(100);
   }
-  nivel_ruido = suma / 10;
+
+  nivel_ruido = suma / lecturas;
+
+  Serial.print("Nivel de ruido: ");
+  Serial.print(nivel_ruido);
+  Serial.print(" | ");
+
+  int barras = map(nivel_ruido, 0, 1023, 0, 50);
+  for (int i = 0; i < barras; i++) {
+    Serial.print("=");
+  }
+  Serial.print(" ");
+
+  if (nivel_ruido < 100) {
+    Serial.println("Silencio");
+  } else if (nivel_ruido < 300) {
+    Serial.println("Ruido bajo");
+  } else if (nivel_ruido < 500) {
+    Serial.println("Ruido moderado");
+  } else if (nivel_ruido < 700) {
+    Serial.println("Ruido alto");
+  } else {
+    Serial.println("Ruido muy alto - PELIGROSO");
+  }
 }
 
 void actualizarMotor() {
@@ -263,21 +285,37 @@ void actualizarMotor() {
 }
 
 float medirDistancia() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+  const int INTENTOS = 3;
+  float distancia = -1;
 
-  long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (duracion == 0) return -1;
+  for (int i = 0; i < INTENTOS; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(3);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(12);
+    digitalWrite(TRIG_PIN, LOW);
 
-  return duracion * 0.0343 / 2.0;
+    long duracion = pulseIn(ECHO_PIN, HIGH, 35000);
+
+    if (duracion > 0) {
+      distancia = duracion * 0.0343 / 2.0;
+      break;
+    }
+
+    delay(5);
+  }
+
+  static float ultima_valida = 0;
+
+  if (distancia <= 0) {
+    return ultima_valida;
+  } else {
+    ultima_valida = distancia;
+    return distancia;
+  }
 }
 
-// -------------------------------
-// ENVIAR DATOS A GOOGLE SHEETS
-// -------------------------------
+
 void enviarDatosSheets() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Sheets: WiFi NO conectado.");
@@ -286,11 +324,13 @@ void enviarDatosSheets() {
 
   distancia_actual = medirDistancia();
 
-  temperatura_actual = bmp.readTemperature();
-  presion_hpa = bmp.readPressure() / 100.0;
+  // BMP280 robusto
+  float t = bmp.readTemperature();
+  float p = bmp.readPressure() / 100.0;
 
-  if (isnan(temperatura_actual)) temperatura_actual = 0;
-  if (isnan(presion_hpa)) presion_hpa = 0;
+  if (!isnan(t) && t > -40 && t < 120) temperatura_actual = t;
+  if (!isnan(p) && p > 200 && p < 1200) presion_hpa = p;
+
 
   int luz_raw = faros_encendidos ? 1 : 0;
 
