@@ -4,47 +4,43 @@
 // Programacion de Microprocesadores - UVG
 // ===================================================================
 
+#define BLYNK_TEMPLATE_ID "TMPL2o9uD4TEV"
+#define BLYNK_TEMPLATE_NAME "PROY2"
+#define BLYNK_AUTH_TOKEN "vtpLDiPwQ5PLS6BIZFjQ8PWcP-WwNR_J"
+
 #include <Wire.h>
 #include <ESP8266WiFi.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 #include <WiFiClientSecure.h>
+#include <BlynkSimpleEsp8266.h>
 
 // ===================================================================
 // CONFIGURACIÓN WIFI
 // ===================================================================
 
-const char* WIFI_SSID = "CLARO1_F4A959";
-const char* WIFI_PASS = "21938DEKzc";
+//const char* WIFI_SSID = "CLARO1_F4A959";
+//const char* WIFI_PASS = "21938DEKzc";
+const char* WIFI_SSID = "iPhone de Diego Calderón (2)";
+const char* WIFI_PASS = "Diego_andre";
 
 String GOOGLE_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMLoIvZ_iDyRddpPzAai2Jp2L7MWzpDG7zfOlQCU4mtWZyF1gqvWojBjc1WNohcj0/exec";
 
-#define SHEETS_INTERVAL 15000
+#define SHEETS_INTERVAL 10000
 unsigned long lastSheetsMillis = 0;
 
 // ===================================================================
 // DEFINICION DE PINES
 // ===================================================================
 
-// BMP280
 #define BMP_SDA 4
 #define BMP_SCL 5
-
-// Microfono KY-037/038 (Analogico)
 #define MIC_ANALOG A0
-
-// Fotorresistencia (Digital)
 #define LUZ_DO 16
-
-// Sensor Ultrasonico HC-SR04
 #define TRIG_PIN 14
 #define ECHO_PIN 13
-
-// Sensor Tactil TTP223
 #define TOUCH_PIN 12
-
-// Actuadores (con resistencias para boot seguro)
 #define MOTOR_PIN 0
 #define BUZZER_PIN 15
 #define FARO_PIN 2
@@ -55,10 +51,8 @@ unsigned long lastSheetsMillis = 0;
 
 #define APAGADO 0
 #define ENCENDIDO 1
-
 #define DIST_ALARMA 30
 #define DIST_CRITICA 10
-
 #define LUZ_INTERVAL 500
 #define DIST_INTERVAL 200
 #define MIC_INTERVAL 300
@@ -85,6 +79,31 @@ int nivel_ruido = 0;
 float temperatura_actual = 0.0;
 float presion_hpa = 0.0;
 
+BlynkTimer blynkTimer;
+
+// ===================================================================
+// CONTROL REMOTO DESDE BLYNK
+// ===================================================================
+
+BLYNK_WRITE(V4) {
+  int v = param.asInt();
+  car_state = (v == 1 ? ENCENDIDO : APAGADO);
+  Serial.print("Blynk -> Estado remoto: ");
+  Serial.println(car_state);
+}
+
+// ===================================================================
+// ENVÍO DE TELEMETRÍA A BLYNK
+// ===================================================================
+
+void enviarDatosBlynk() {
+  Blynk.virtualWrite(V0, temperatura_actual);
+  Blynk.virtualWrite(V1, presion_hpa);
+  Blynk.virtualWrite(V2, faros_encendidos ? 1 : 0);
+  Blynk.virtualWrite(V3, distancia_actual);
+  Blynk.virtualWrite(V4, car_state);
+}
+
 // ===================================================================
 // SETUP
 // ===================================================================
@@ -100,7 +119,6 @@ void setup() {
   pinMode(TOUCH_PIN, INPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(LUZ_DO, INPUT);
-
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(MOTOR_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
@@ -139,8 +157,12 @@ void setup() {
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("\nNO se pudo conectar (offline mode).");
+    Serial.println("\nNO se pudo conectar.");
   }
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, WIFI_SSID, WIFI_PASS);
+  Blynk.virtualWrite(V4, car_state);
+  blynkTimer.setInterval(2000L, enviarDatosBlynk);
 
   Serial.println("\nSistema listo.");
   Serial.println("ESTADO: APAGADO");
@@ -151,6 +173,9 @@ void setup() {
 // ===================================================================
 
 void loop() {
+  Blynk.run();
+  blynkTimer.run();
+
   unsigned long now = millis();
 
   gestionarEncendidoTactil();
@@ -158,7 +183,6 @@ void loop() {
   if (now - lastLuzMillis >= LUZ_INTERVAL) {
     lastLuzMillis = now;
     leerFotorresistencia();
-
     if (car_state == ENCENDIDO) controlarFaros();
     else apagarFaros();
   }
@@ -178,11 +202,12 @@ void loop() {
   if (now - lastSheetsMillis >= SHEETS_INTERVAL) {
     lastSheetsMillis = now;
     enviarDatosSheets();
+    enviarDatosBlynk();
   }
 }
 
 // ===================================================================
-// FUNCIONES
+// FUNCIONES DEL SISTEMA (SIN CAMBIOS DE LÓGICA)
 // ===================================================================
 
 void gestionarEncendidoTactil() {
@@ -198,6 +223,8 @@ void gestionarEncendidoTactil() {
       car_state = APAGADO;
       Serial.println("\n=== MOTOR APAGADO ===\n");
     }
+
+    Blynk.virtualWrite(V4, car_state);
   }
 
   prev_touch_state = touch_state;
@@ -248,36 +275,22 @@ void asistenciaRetroceso() {
 
 void leerNivelRuido() {
   int suma = 0;
-  int lecturas = 10;
 
-  for (int i = 0; i < lecturas; i++) {
+  for (int i = 0; i < 10; i++) {
     suma += analogRead(MIC_ANALOG);
     delayMicroseconds(100);
   }
 
-  nivel_ruido = suma / lecturas;
+  nivel_ruido = suma / 10;
 
   Serial.print("Nivel de ruido: ");
   Serial.print(nivel_ruido);
   Serial.print(" | ");
 
   int barras = map(nivel_ruido, 0, 1023, 0, 50);
-  for (int i = 0; i < barras; i++) {
-    Serial.print("=");
-  }
-  Serial.print(" ");
+  for (int i = 0; i < barras; i++) Serial.print("=");
 
-  if (nivel_ruido < 100) {
-    Serial.println("Silencio");
-  } else if (nivel_ruido < 300) {
-    Serial.println("Ruido bajo");
-  } else if (nivel_ruido < 500) {
-    Serial.println("Ruido moderado");
-  } else if (nivel_ruido < 700) {
-    Serial.println("Ruido alto");
-  } else {
-    Serial.println("Ruido muy alto - PELIGROSO");
-  }
+  Serial.println();
 }
 
 void actualizarMotor() {
@@ -315,7 +328,6 @@ float medirDistancia() {
   }
 }
 
-
 void enviarDatosSheets() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Sheets: WiFi NO conectado.");
@@ -324,13 +336,11 @@ void enviarDatosSheets() {
 
   distancia_actual = medirDistancia();
 
-  // BMP280 robusto
   float t = bmp.readTemperature();
   float p = bmp.readPressure() / 100.0;
 
   if (!isnan(t) && t > -40 && t < 120) temperatura_actual = t;
   if (!isnan(p) && p > 200 && p < 1200) presion_hpa = p;
-
 
   int luz_raw = faros_encendidos ? 1 : 0;
 
