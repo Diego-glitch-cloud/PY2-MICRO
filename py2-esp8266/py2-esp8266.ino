@@ -19,10 +19,10 @@
 // CONFIGURACIÓN WIFI
 // ===================================================================
 
-//const char* WIFI_SSID = "CLARO1_F4A959";
-//const char* WIFI_PASS = "21938DEKzc";
-const char* WIFI_SSID = "iPhone de Diego Calderón (2)";
-const char* WIFI_PASS = "Diego_andre";
+const char* WIFI_SSID = "CLARO1_F4A959";
+const char* WIFI_PASS = "21938DEKzc";
+//const char* WIFI_SSID = "iPhone de Diego Calderón (2)";
+//const char* WIFI_PASS = "Diego_andre";
 
 String GOOGLE_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMLoIvZ_iDyRddpPzAai2Jp2L7MWzpDG7zfOlQCU4mtWZyF1gqvWojBjc1WNohcj0/exec";
@@ -102,6 +102,7 @@ void enviarDatosBlynk() {
   Blynk.virtualWrite(V2, faros_encendidos ? 1 : 0);
   Blynk.virtualWrite(V3, distancia_actual);
   Blynk.virtualWrite(V4, car_state);
+  Blynk.virtualWrite(V5, nivel_ruido);
 }
 
 // ===================================================================
@@ -207,7 +208,7 @@ void loop() {
 }
 
 // ===================================================================
-// FUNCIONES DEL SISTEMA (SIN CAMBIOS DE LÓGICA)
+// FUNCIONES DEL SISTEMA
 // ===================================================================
 
 void gestionarEncendidoTactil() {
@@ -345,8 +346,8 @@ void enviarDatosSheets() {
   int luz_raw = faros_encendidos ? 1 : 0;
 
   String url = String(GOOGLE_SCRIPT_URL) +
-    "?presion=" + presion_hpa +
-    "&temp_motor=" + temperatura_actual +
+    "?presion=" + presion_hpa +   
+    "&temp_motor=" + temperatura_actual + 
     "&luz=" + luz_raw +
     "&dist=" + distancia_actual +
     "&estado=" + car_state;
