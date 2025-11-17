@@ -181,6 +181,8 @@ void loop() {
   }
 
   actualizarMotor();
+  distancia_actual = medirDistancia();
+
 
   if (now - lastSheetsMillis >= SHEETS_INTERVAL) {
     lastSheetsMillis = now;
