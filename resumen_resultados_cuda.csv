@@ -1,0 +1,14 @@
+medicion,valor
+N,5000
+deltaT_promedio_C,23.3691
+deltaT_maximo_C,31.417
+tiempo_total_faros_encendidos_s,29810
+eventos_faros,1181
+duracion_promedio_faros_s,25.2413
+mediciones_hcsr04_retroceso,5000
+distancia_promedio_cm,63.3301
+desviacion_estandar_cm,29.6716
+eventos_apagado,1181
+eventos_encendido,1181
+ciclos_completos,1181
+Tpromedio_encendido_s,25.2413
