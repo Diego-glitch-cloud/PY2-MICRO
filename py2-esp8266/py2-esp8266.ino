@@ -1,116 +1,91 @@
+
 // ===================================================================
 // AXIS MOTORS - Sistema de Carro Inteligente IoT
 // Grupo 6: Diego C. S., Pedro C. T., Hugo M. L., Arodi C. R.
-// Programación de Microprocesadores - UVG
+// Programacion de Microprocesadores - UVG
 // ===================================================================
 
 #include <Wire.h>
-#include <SPI.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BMP280.h>
-#include <MFRC522.h>
+// #include <Adafruit_Sensor.h>
+// #include <Adafruit_BMP280.h>
 
 // ===================================================================
-// DEFINICIÓN DE PINES
+// DEFINICION DE PINES
 // ===================================================================
 
-// Sensor BMP280 (I2C)
-#define BMP_SDA 4         // D2 - GPIO4
-#define BMP_SCL 5         // D1 - GPIO5
+// BMP280
+// #define BMP_SDA 4         // D2 - GPIO4
+// #define BMP_SCL 5         // D1 - GPIO5
 
-// RFID RC522 (SPI)
-#define RFID_SS 15        // D8 - GPIO15
-#define RFID_RST 0        // D3 - GPIO0
-#define RFID_SCK 14       // D5 - GPIO14
-#define RFID_MOSI 13      // D7 - GPIO13
-#define RFID_MISO 12      // D6 - GPIO12
+// Microfono KY-037/038 (Analogico)
+#define MIC_ANALOG A0     // A0 - ADC (nivel de ruido)
 
-// Sensor Táctil TTP223
-#define TOUCH_PIN 2       // D4 - GPIO2
+// Fotorresistencia (Digital)
+#define LUZ_DO 16         // D0 - GPIO16 (deteccion luz/oscuro)
 
-// Sensor Ultrasónico HC-SR04
-#define TRIG_PIN 16       // D0 - GPIO16
-#define ECHO_PIN 3        // RX - GPIO3
+// Sensor Ultrasonico HC-SR04
+#define TRIG_PIN 14       // D5 - GPIO14
+#define ECHO_PIN 13       // D7 - GPIO13
 
-// Actuadores
-#define MOTOR_PIN 1       // TX - GPIO1 (Control Digital ON/OFF)
-#define BUZZER_PIN 9      // SD2 - GPIO9 - BUZZER ACTIVO
-#define LED_VERDE 14      // D5 - GPIO14 (COMPARTIDO con RFID SCK)
-#define FARO_PIN 10       // SD3 - GPIO10
+// Sensor Tactil TTP223
+#define TOUCH_PIN 12      // D6 - GPIO12
 
-// Sensor de Luz (Fotoresistencia)
-#define LUZ_PIN A0        // A0 - ADC
+// Actuadores (con resistencias para boot seguro)
+#define MOTOR_PIN 0       // D3 - GPIO0 (requiere pull-up 10k a 3.3V)
+#define BUZZER_PIN 15     // D8 - GPIO15 (requiere pull-down 10k a GND)
+#define FARO_PIN 2        // D4 - GPIO2 (requiere pull-up 10k a 3.3V)
 
 // ===================================================================
 // CONSTANTES DEL SISTEMA
 // ===================================================================
 
 // Estados del carro
-#define BLOQUEADO 0       // Tarjeta no validada - Sistema bloqueado
-#define DESBLOQUEADO 1    // Tarjeta aceptada - Motor apagado
-#define ENCENDIDO 2       // Tarjeta aceptada - Motor encendido
+#define APAGADO 0       
+#define ENCENDIDO 1       
 
-// Valores PWM calculados (solo para variable interna, no para motor físico)
-#define PWM_OFF 0
-#define PWM_BAJO 205      // 20%
-#define PWM_MEDIO 614     // 60%
-#define PWM_ALTO 1023     // 100%
+// BMP280 
+// #define TEMP_OFF 30.0
+// #define TEMP_BAJO 35.0
+// #define TEMP_MEDIO 40.0
 
-// Umbrales de temperatura (°C)
-#define TEMP_OFF 30.0
-#define TEMP_BAJO 35.0
-#define TEMP_MEDIO 40.0
-
-// Umbrales de luminosidad
-#define LUZ_OSCURO 300
-#define LUZ_CLARO 400
-
-// Umbrales de distancia (cm)
+// Umbrales de distancia
 #define DIST_ALARMA 30
 #define DIST_CRITICA 10
 
-// Tiempos de actualización (ms)
-#define TEMP_INTERVAL 2000
+// Tiempos de actualizacion (ms)
+// #define TEMP_INTERVAL 2000
 #define LUZ_INTERVAL 500
 #define DIST_INTERVAL 200
-
-// UID válido de ejemplo para RFID (4 bytes)
-byte UID_VALIDO[] = {0xDE, 0xAD, 0xBE, 0xEF};
+#define MIC_INTERVAL 300
 
 // ===================================================================
 // VARIABLES GLOBALES
 // ===================================================================
 
-// Estado del sistema (CRÍTICO)
-int car_state = BLOQUEADO;
+int car_state = APAGADO;
+// Adafruit_BMP280 bmp;  // BMP280 deshabilitado
 
-// Objetos de sensores
-Adafruit_BMP280 bmp;
-MFRC522 rfid(RFID_SS, RFID_RST);
-
-// Control de tiempo
-unsigned long lastTempMillis = 0;
+// unsigned long lastTempMillis = 0;
 unsigned long lastLuzMillis = 0;
 unsigned long lastDistMillis = 0;
+unsigned long lastMicMillis = 0;
 
-// Estados previos para detección de flancos
 bool prev_touch_state = false;
 bool faros_encendidos = false;
 
-// Lecturas de sensores
-float temperatura_actual = 0.0;
-int luz_actual = 0;
+// float temperatura_actual = 0.0;  // BMP280 deshabilitado
+bool luz_oscura = false;
 float distancia_actual = 0.0;
-
-// Variable PWM calculada (para futuro envío a Blynk)
-int pwm_ventilador_calculado = PWM_OFF;
+int nivel_ruido = 0;
 
 // ===================================================================
-// CONFIGURACIÓN INICIAL
+// SETUP
 // ===================================================================
 
 void setup() {
   Serial.begin(115200);
+  delay(100);
+  
   Serial.println("\n===================================");
   Serial.println("AXIS MOTORS - Sistema Iniciando...");
   Serial.println("===================================\n");
@@ -118,188 +93,132 @@ void setup() {
   // Configurar pines de entrada
   pinMode(TOUCH_PIN, INPUT);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(LUZ_PIN, INPUT);
+  pinMode(LUZ_DO, INPUT);
   
   // Configurar pines de salida
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(MOTOR_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(FARO_PIN, OUTPUT);
-  pinMode(LED_VERDE, OUTPUT);
   
-  // Estado inicial: BLOQUEADO - Todo apagado
+  // Estado inicial: todo apagado
   digitalWrite(MOTOR_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(FARO_PIN, LOW);
-  digitalWrite(LED_VERDE, LOW);
   
+  // BMP280 deshabilitado - sensor danado
+  /*
   // Inicializar I2C para BMP280
   Wire.begin(BMP_SDA, BMP_SCL);
+  delay(100);
+  
+  Serial.println("Intentando inicializar BMP280...");
   
   if (!bmp.begin(0x76)) {
-    Serial.println("ADVERTENCIA: BMP280 no detectado en 0x76, probando 0x77...");
+    Serial.println("BMP280 no detectado en direccion 0x76");
+    Serial.println("Probando direccion 0x77...");
     if (!bmp.begin(0x77)) {
-      Serial.println("ERROR: BMP280 no detectado. Revisar conexiones.");
+      Serial.println("ERROR: BMP280 no detectado en ninguna direccion");
+      Serial.println("Verifica las conexiones:");
+      Serial.println("  SDA -> D2 (GPIO4)");
+      Serial.println("  SCL -> D1 (GPIO5)");
+      Serial.println("  VCC -> 3.3V");
+      Serial.println("  GND -> GND");
     } else {
-      Serial.println("BMP280 inicializado en 0x77");
+      Serial.println("BMP280 inicializado correctamente en 0x77");
+      bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                      Adafruit_BMP280::SAMPLING_X2,
+                      Adafruit_BMP280::SAMPLING_X16,
+                      Adafruit_BMP280::FILTER_X16,
+                      Adafruit_BMP280::STANDBY_MS_500);
     }
   } else {
-    Serial.println("BMP280 inicializado en 0x76");
+    Serial.println("BMP280 inicializado correctamente en 0x76");
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                    Adafruit_BMP280::SAMPLING_X2,
+                    Adafruit_BMP280::SAMPLING_X16,
+                    Adafruit_BMP280::FILTER_X16,
+                    Adafruit_BMP280::STANDBY_MS_500);
   }
+  */
   
-  // Inicializar SPI para RFID
-  SPI.begin();
-  rfid.PCD_Init();
-  Serial.println("RFID RC522 inicializado");
-  Serial.print("UID válido configurado: ");
-  printUID(UID_VALIDO, 4);
+  Serial.println("NOTA: BMP280 deshabilitado (sensor danado)");
   
+  Serial.println("\nConfiguracion:");
+  Serial.println("- Microfono: A0 (Analogico - nivel de ruido)");
+  Serial.println("- Fotorresistencia: D0 (Digital - deteccion luz)");
   Serial.println("\nSistema listo.");
-  Serial.println("ESTADO ACTUAL: BLOQUEADO");
-  Serial.println("Esperando tarjeta RFID valida para desbloquear...\n");
+  Serial.println("ESTADO: APAGADO");
+  Serial.println("Presiona sensor tactil para encender\n");
 }
 
 // ===================================================================
-// BUCLE PRINCIPAL
+// LOOP
 // ===================================================================
 
 void loop() {
   unsigned long now = millis();
   
-  // 1. GESTIÓN DE ACCESO (SIEMPRE ACTIVO)
-  gestionarAccesoRFID();
+  // 1. Sensor Tactil (control de encendido/apagado)
+  gestionarEncendidoTactil();
   
-  // 2. GESTIÓN DE ENCENDIDO CON TÁCTIL (solo si DESBLOQUEADO o ENCENDIDO)
-  if (car_state >= DESBLOQUEADO) {
-    gestionarEncendidoTactil();
-  }
-  
-  // 3. LECTURA DE TEMPERATURA (siempre lee, pero solo calcula PWM)
+  // 2. Temperatura - DESHABILITADO
+  /*
   if (now - lastTempMillis >= TEMP_INTERVAL) {
     lastTempMillis = now;
-    temperatura_actual = leerTemperatura();
-    calcularPWMVentilador(temperatura_actual);
+    leerTemperatura();
   }
+  */
   
-  // 4. CONTROL DE FAROS (solo si ENCENDIDO)
+  // 3. Fotorresistencia y Faros
   if (now - lastLuzMillis >= LUZ_INTERVAL) {
     lastLuzMillis = now;
-    luz_actual = analogRead(LUZ_PIN);
+    leerFotorresistencia();
     
     if (car_state == ENCENDIDO) {
-      controlarFaros(luz_actual);
+      controlarFaros();
     } else {
-      // Si no está encendido, faros apagados
-      if (faros_encendidos) {
-        apagarFaros();
-      }
+      if (faros_encendidos) apagarFaros();
     }
   }
   
-  // 5. ASISTENCIA DE RETROCESO (siempre mide, buzzer solo si ENCENDIDO)
+  // 4. Distancia y Asistencia de Retroceso
   if (now - lastDistMillis >= DIST_INTERVAL) {
     lastDistMillis = now;
     asistenciaRetroceso();
   }
   
-  // 6. CONTROL DEL MOTOR (según estado)
+  // 5. Microfono (nivel de ruido analogico)
+  if (now - lastMicMillis >= MIC_INTERVAL) {
+    lastMicMillis = now;
+    if (car_state == ENCENDIDO) {
+      leerNivelRuido();
+    }
+  }
+  
+  // 6. Motor
   actualizarMotor();
 }
 
 // ===================================================================
-// FUNCIÓN 1: GESTIÓN DE ACCESO CON RFID
-// ===================================================================
-
-void gestionarAccesoRFID() {
-  // Verificar si hay una tarjeta presente
-  if (!rfid.PICC_IsNewCardPresent()) {
-    return;
-  }
-  
-  // Verificar si se puede leer la tarjeta
-  if (!rfid.PICC_ReadCardSerial()) {
-    return;
-  }
-  
-  // Comparar UID leído con UID válido
-  if (compararUID(rfid.uid.uidByte, rfid.uid.size)) {
-    // ACCESO CONCEDIDO
-    if (car_state == BLOQUEADO) {
-      car_state = DESBLOQUEADO;
-      Serial.println("\n========================================");
-      Serial.println("ACCESO CONCEDIDO - Carro DESBLOQUEADO");
-      Serial.println("========================================");
-      Serial.print("UID detectado: ");
-      printUID(rfid.uid.uidByte, rfid.uid.size);
-      
-      // Encender LED Verde por 3 segundos
-      // Importante: Detener SPI primero para liberar GPIO14
-      rfid.PICC_HaltA();
-      rfid.PCD_StopCrypto1();
-      SPI.end();
-      
-      // Configurar GPIO14 como OUTPUT para LED
-      pinMode(LED_VERDE, OUTPUT);
-      digitalWrite(LED_VERDE, HIGH);
-      Serial.println("LED Verde encendido por 3 segundos...");
-      delay(3000);
-      digitalWrite(LED_VERDE, LOW);
-      Serial.println("LED Verde apagado.");
-      
-      // Reiniciar SPI para futuras lecturas RFID
-      SPI.begin();
-      rfid.PCD_Init();
-      
-      Serial.println("\nSistema desbloqueado. Presione sensor tactil para encender motor.\n");
-      return; // Salir después de procesar
-    }
-  } else {
-    // ACCESO DENEGADO
-    Serial.println("\n========================================");
-    Serial.println("ACCESO DENEGADO - UID no autorizado");
-    Serial.println("========================================");
-    Serial.print("UID detectado: ");
-    printUID(rfid.uid.uidByte, rfid.uid.size);
-    
-    // Emitir alarma breve en buzzer
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(200);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(100);
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(200);
-    digitalWrite(BUZZER_PIN, LOW);
-    
-    Serial.println("Sistema permanece BLOQUEADO.\n");
-  }
-  
-  // Detener la lectura
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
-}
-
-// ===================================================================
-// FUNCIÓN 2: GESTIÓN DE ENCENDIDO CON SENSOR TÁCTIL
+// FUNCIONES
 // ===================================================================
 
 void gestionarEncendidoTactil() {
   bool touch_state = digitalRead(TOUCH_PIN);
   
-  // Detección de flanco ascendente (toque nuevo)
   if (touch_state == HIGH && prev_touch_state == LOW) {
-    delay(50); // Anti-rebote
+    delay(50); // Debounce
     
-    if (car_state == DESBLOQUEADO) {
-      // Cambiar de DESBLOQUEADO a ENCENDIDO
+    if (car_state == APAGADO) {
       car_state = ENCENDIDO;
       Serial.println("\n========================================");
-      Serial.println("MOTOR ENCENDIDO - Carro en marcha");
+      Serial.println("MOTOR ENCENDIDO");
       Serial.println("========================================\n");
     } else if (car_state == ENCENDIDO) {
-      // Cambiar de ENCENDIDO a DESBLOQUEADO
-      car_state = DESBLOQUEADO;
+      car_state = APAGADO;
       Serial.println("\n========================================");
-      Serial.println("MOTOR APAGADO - Carro desbloqueado");
+      Serial.println("MOTOR APAGADO");
       Serial.println("========================================\n");
     }
   }
@@ -307,57 +226,55 @@ void gestionarEncendidoTactil() {
   prev_touch_state = touch_state;
 }
 
-// ===================================================================
-// FUNCIÓN 3: CÁLCULO DE PWM VENTILADOR (solo variable interna)
-// ===================================================================
-
-void calcularPWMVentilador(float temp) {
-  int pwm_anterior = pwm_ventilador_calculado;
-  String nivel = "OFF";
+// BMP280 deshabilitado
+/*
+void leerTemperatura() {
+  float temp = bmp.readTemperature();
   
-  if (temp >= TEMP_MEDIO) {
-    pwm_ventilador_calculado = PWM_ALTO;
-    nivel = "ALTO (100%)";
-  } else if (temp >= TEMP_BAJO) {
-    pwm_ventilador_calculado = PWM_MEDIO;
-    nivel = "MEDIO (60%)";
-  } else if (temp >= TEMP_OFF) {
-    pwm_ventilador_calculado = PWM_BAJO;
-    nivel = "BAJO (20%)";
-  } else {
-    pwm_ventilador_calculado = PWM_OFF;
-    nivel = "OFF";
+  // Verificar si la lectura es valida
+  if (isnan(temp) || temp < -40 || temp > 85) {
+    Serial.println("Error leyendo temperatura - Verificar conexiones BMP280");
+    Serial.println("Revisa: SDA en D2 (GPIO4), SCL en D1 (GPIO5), VCC en 3.3V, GND");
+    return;
   }
   
-  // Solo imprimir si cambió el nivel
-  if (pwm_anterior != pwm_ventilador_calculado) {
-    Serial.print("Temperatura: ");
-    Serial.print(temp, 1);
-    Serial.print(" grados C | Nivel ventilador calculado: ");
-    Serial.print(nivel);
-    Serial.print(" (PWM: ");
-    Serial.print(pwm_ventilador_calculado);
-    Serial.println(") [Variable interna para Blynk]");
+  temperatura_actual = temp;
+  
+  Serial.print("Temperatura: ");
+  Serial.print(temp, 1);
+  Serial.println(" C");
+}
+*/
+
+void leerFotorresistencia() {
+  // Leer pin digital de fotorresistencia
+  // HIGH = oscuro (activar faros)
+  // LOW = claro (apagar faros)
+  bool estado_luz = digitalRead(LUZ_DO);
+  
+  if (estado_luz == HIGH) {
+    // Oscuro
+    if (!luz_oscura) {
+      luz_oscura = true;
+      Serial.println("Luz: OSCURO detectado");
+    }
+  } else {
+    // Claro
+    if (luz_oscura) {
+      luz_oscura = false;
+      Serial.println("Luz: CLARO detectado");
+    }
   }
 }
 
-// ===================================================================
-// FUNCIÓN 4: CONTROL DE ILUMINACIÓN AUTOMÁTICA
-// ===================================================================
-
-void controlarFaros(int luz) {
-  // Implementar histéresis para evitar parpadeo
-  if (luz <= LUZ_OSCURO && !faros_encendidos) {
-    // Está oscuro, encender faros
+void controlarFaros() {
+  if (luz_oscura && !faros_encendidos) {
     digitalWrite(FARO_PIN, HIGH);
     faros_encendidos = true;
-    Serial.print("Faros ENCENDIDOS | Luminosidad: ");
-    Serial.println(luz);
-  } else if (luz >= LUZ_CLARO && faros_encendidos) {
-    // Está claro, apagar faros
+    Serial.println("Faros ENCENDIDOS");
+  } else if (!luz_oscura && faros_encendidos) {
     apagarFaros();
-    Serial.print("Faros APAGADOS | Luminosidad: ");
-    Serial.println(luz);
+    Serial.println("Faros APAGADOS");
   }
 }
 
@@ -366,114 +283,91 @@ void apagarFaros() {
   faros_encendidos = false;
 }
 
-// ===================================================================
-// FUNCIÓN 5: ASISTENCIA DE RETROCESO
-// ===================================================================
-
 void asistenciaRetroceso() {
-  // Siempre mide distancia
   distancia_actual = medirDistancia();
   
   if (distancia_actual <= 0) {
-    // Lectura inválida, apagar buzzer si estaba encendido
-    if (car_state == ENCENDIDO) {
-      digitalWrite(BUZZER_PIN, LOW);
-    }
+    digitalWrite(BUZZER_PIN, LOW);
     return;
   }
   
-  // Solo actuar con el buzzer si el carro está ENCENDIDO
   if (car_state == ENCENDIDO) {
     if (distancia_actual <= DIST_CRITICA) {
-      // Distancia crítica: buzzer activo sonando constantemente
       digitalWrite(BUZZER_PIN, HIGH);
-      Serial.print("ALERTA RETROCESO | Distancia: ");
+      Serial.print("ALERTA CRITICA | Distancia: ");
       Serial.print(distancia_actual, 1);
-      Serial.println(" cm | CRITICA - Buzzer constante");
+      Serial.println(" cm");
     } else if (distancia_actual <= DIST_ALARMA) {
-      // Distancia de advertencia: buzzer activo intermitente
+      // Beep intermitente
       static unsigned long lastBeep = 0;
       unsigned long now = millis();
       if (now - lastBeep > 300) {
         digitalWrite(BUZZER_PIN, !digitalRead(BUZZER_PIN));
         lastBeep = now;
       }
-      Serial.print("ALERTA RETROCESO | Distancia: ");
-      Serial.print(distancia_actual, 1);
-      Serial.println(" cm | Alarma intermitente");
     } else {
-      // Distancia segura, apagar buzzer activo
       digitalWrite(BUZZER_PIN, LOW);
     }
   } else {
-    // Si no está encendido, asegurar buzzer apagado
     digitalWrite(BUZZER_PIN, LOW);
   }
 }
 
-// ===================================================================
-// FUNCIÓN 6: ACTUALIZAR ESTADO DEL MOTOR
-// ===================================================================
+void leerNivelRuido() {
+  // Leer valor analogico del microfono con promedio para filtrar ruido electrico
+  int suma = 0;
+  int lecturas = 10;
+  
+  for (int i = 0; i < lecturas; i++) {
+    suma += analogRead(MIC_ANALOG);
+    delayMicroseconds(100);
+  }
+  
+  nivel_ruido = suma / lecturas;
+  
+  Serial.print("Nivel de ruido: ");
+  Serial.print(nivel_ruido);
+  Serial.print(" | ");
+  
+  // Barra visual del nivel
+  int barras = map(nivel_ruido, 0, 1023, 0, 50);
+  for (int i = 0; i < barras; i++) {
+    Serial.print("=");
+  }
+  Serial.print(" ");
+  
+  // Clasificacion del ruido
+  if (nivel_ruido < 100) {
+    Serial.println("Silencio");
+  } else if (nivel_ruido < 300) {
+    Serial.println("Ruido bajo");
+  } else if (nivel_ruido < 500) {
+    Serial.println("Ruido moderado");
+  } else if (nivel_ruido < 700) {
+    Serial.println("Ruido alto");
+  } else {
+    Serial.println("Ruido muy alto - PELIGROSO");
+  }
+}
 
 void actualizarMotor() {
   if (car_state == ENCENDIDO) {
-    // Motor ON
     digitalWrite(MOTOR_PIN, HIGH);
   } else {
-    // Motor OFF (BLOQUEADO o DESBLOQUEADO)
     digitalWrite(MOTOR_PIN, LOW);
   }
 }
 
-// ===================================================================
-// FUNCIONES AUXILIARES
-// ===================================================================
-
-float leerTemperatura() {
-  float temp = bmp.readTemperature();
-  if (isnan(temp)) {
-    Serial.println("Error al leer temperatura");
-    return 0.0;
-  }
-  return temp;
-}
-
 float medirDistancia() {
-  // Enviar pulso de 10µs
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
   
-  // Leer tiempo de eco (timeout 30ms = ~5m)
   long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
   
-  if (duracion == 0) {
-    return -1; // Timeout
-  }
+  if (duracion == 0) return -1;
   
-  // Calcular distancia: velocidad sonido = 343 m/s
-  float distancia = duracion * 0.0343 / 2.0;
-  return distancia;
-}
-
-bool compararUID(byte* uid, byte size) {
-  if (size != 4) return false;
-  
-  for (byte i = 0; i < 4; i++) {
-    if (uid[i] != UID_VALIDO[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-void printUID(byte* uid, byte size) {
-  for (byte i = 0; i < size; i++) {
-    if (uid[i] < 0x10) Serial.print("0");
-    Serial.print(uid[i], HEX);
-    if (i < size - 1) Serial.print(":");
-  }
-  Serial.println();
+  return duracion * 0.0343 / 2.0;
 }
