@@ -23,6 +23,10 @@ const char* WIFI_SSID = "CLARO1_F4A959";
 const char* WIFI_PASS = "21938DEKzc";
 //const char* WIFI_SSID = "iPhone de Diego Calderón (2)";
 //const char* WIFI_PASS = "Diego_andre";
+//const char* WIFI_SSID = "iPhone de Pedro";
+//const char* WIFI_PASS = "Cosecha246";
+//const char* WIFI_SSID = "Hugo";
+//const char* WIFI_PASS = "Hugo2002";
 
 String GOOGLE_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMLoIvZ_iDyRddpPzAai2Jp2L7MWzpDG7zfOlQCU4mtWZyF1gqvWojBjc1WNohcj0/exec";
